@@ -26,10 +26,22 @@ const (
 	FormatPprof Format = "pprof"
 )
 
+// For systems where it must match the expected, such as
+// contents and delay if displaying with something that
+// understands a block/mutex profile.
+type Sample struct {
+	Name string // samples, contentions, ...
+	Type string // time, delay, cpu, ...
+}
+
 // Start begins profiling the goroutines of the program and returns a function
 // that needs to be invoked by the caller to stop the profiling and write the
 // results to w using the given format.
 func Start(w io.Writer, format Format) func() error {
+	return StartFull(w, format, Sample{})
+}
+
+func StartFull(w io.Writer, format Format, s Sample) func() error {
 	startTime := time.Now()
 
 	// Go's CPU profiler uses 100hz, but 99hz might be less likely to result in
@@ -39,7 +51,7 @@ func Start(w io.Writer, format Format) func() error {
 	stopCh := make(chan struct{})
 
 	prof := &profiler{}
-	profile := newWallclockProfile()
+	profile := newWallclockProfile(s)
 
 	go func() {
 		defer ticker.Stop()
@@ -114,8 +126,8 @@ func (p *profiler) SelfFrames() []*runtime.Frame {
 	return nil
 }
 
-func newWallclockProfile() *wallclockProfile {
-	return &wallclockProfile{stacks: map[[32]uintptr]*wallclockStack{}}
+func newWallclockProfile(s Sample) *wallclockProfile {
+	return &wallclockProfile{stacks: map[[32]uintptr]*wallclockStack{}, sample: s}
 }
 
 // wallclockProfile holds a wallclock profile that can be exported in different
@@ -123,6 +135,7 @@ func newWallclockProfile() *wallclockProfile {
 type wallclockProfile struct {
 	stacks map[[32]uintptr]*wallclockStack
 	ignore []*runtime.Frame
+	sample Sample
 }
 
 // wallclockStack holds the symbolized frames of a stack trace and the number
@@ -204,6 +217,13 @@ func (p *wallclockProfile) exportFolded(w io.Writer) error {
 }
 
 func (p *wallclockProfile) exportPprof(hz int, startTime, endTime time.Time) *profile.Profile {
+	if p.sample.Name == "" {
+		p.sample.Name = "samples"
+	}
+	if p.sample.Type == "" {
+		p.sample.Type = "time"
+	}
+
 	prof := &profile.Profile{}
 	m := &profile.Mapping{ID: 1, HasFunctions: true}
 	prof.Period = int64(1e9 / hz) // Number of nanoseconds between samples.
@@ -212,11 +232,11 @@ func (p *wallclockProfile) exportPprof(hz int, startTime, endTime time.Time) *pr
 	prof.Mapping = []*profile.Mapping{m}
 	prof.SampleType = []*profile.ValueType{
 		{
-			Type: "samples",
+			Type: p.sample.Name,
 			Unit: "count",
 		},
 		{
-			Type: "time",
+			Type: p.sample.Type,
 			Unit: "nanoseconds",
 		},
 	}

@@ -168,3 +168,24 @@ func BenchmarkStackCounter(b *testing.B) {
 		sc.Add(stacks)
 	}
 }
+
+func TestStartFull(t *testing.T) {
+	var buf bytes.Buffer
+	stop := StartFull(&buf, FormatPprof, Sample{Name: "contentions", Type: "delay"})
+	stop()
+
+	p, err := profile.ParseData(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(p.SampleType) != 2 {
+		t.Fatal(p)
+	}
+	if p.SampleType[0].Type != "contentions" {
+		t.Fatal(p)
+	}
+	if p.SampleType[1].Type != "delay" {
+		t.Fatal(p)
+	}
+}
